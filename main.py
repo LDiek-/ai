@@ -1,4 +1,4 @@
-#! /bin/usr/python
+#! /usr/bin/python
 # -*- coding: utf-8 -*-
 
 import json
@@ -62,6 +62,7 @@ class Connection():
             for key in connector.verb_infos:
                 if key == self.name:
                     del connector.verb_infos[key]
+                    print "[-] killed Connection %s" % self.name
                     break
 
 class Input_Neuron():
@@ -91,7 +92,7 @@ class Input_Neuron():
     def verbinden(self, neuron):
         # Fügt ein Verbindungs-Objekt dem Array hinzu
         self.verbindungen.append(Connection(self.name+str(self.count_con),
-                                            self.name, neuron, 1))
+                                            self, neuron, 1))
         self.count_con += 1
         self.verb_infos[self.name+str(self.count_con)] = 1
     
@@ -152,14 +153,14 @@ class Input_Neuron():
         # myDict in Unicode "ISO-8859-1" verwandeln
         for key in myDict:
             if isinstance(myDict[key], list):
-                myDict[key] = map(lambda x: make_unicode(x), myDict[key])
+                myDict[key] = map(lambda x: self.make_unicode(x), myDict[key])
             elif isinstance(myDict[key], dict):
                 for newKey in myDict[key]:
                     # Daten des types Int müssen nicht umgewandelt werden
                     if not isinstance(myDict[key][newKey], int):
-                        myDict[key] = make_unicode(myDict[key][newKey])
+                        myDict[key] = self.make_unicode(myDict[key][newKey])
             elif not isinstance(myDict[key], int):
-                myDict[key] = make_unicode(myDict[key])
+                myDict[key] = self.make_unicode(myDict[key])
 
         return myDict
 
@@ -186,6 +187,22 @@ class Input_Neuron():
                     obj = Connection(connName, self, outputNeuron, conns[connName])
                     self.verbindungen.append(obj)
 
+    def make_unicode(self, string):
+        """
+        Erzeugt ISO-8859-1 codierte codes
+
+        :rtype: basestring
+        :type string: str
+        """
+
+        try:
+            if isinstance(string, unicode):
+                return string
+            elif isinstance(string, str):
+                return unicode(string, "ISO-8859-1")
+        except UnicodeDecodeError:
+            return ""
+
 class Output_Neuron():
     def __init__(self, name):
         self.name = name
@@ -209,7 +226,7 @@ class Output_Neuron():
             if isinstance(myDict[key], list):
                 myDict[key] = map(lambda x: unicode(x, "ISO-8859-1"), myDict[key])
             elif not isinstance(myDict[key], int):
-                myDict[key] = unicode(myDict[key], "ISO-8859-1")
+                if isinstance(myDict[key], str): myDict[key] = unicode(myDict[key], "ISO-8859-1")
 
         return myDict
         
@@ -239,26 +256,78 @@ def train():
     " n" zeigt an, dass das vorherige Wort kein Nomen ist
     """
 
-    #TODO Richtiges erstellen der Neuronen
+    def _save():
+        """Diese Funktion soll InputNeuronen speichern, sodass man sie
+        später wieder laden kann und keine Daten verloren gehen
+        Mit JSONEncoder und o.__dict__ dafür muss jedoch noch eine Funktion
+        in den Klassen definiert werden"""
+        f_input = open("saved_input.json", "w")
+        f_output = open("saved_output.json", "w")
 
-    #1
-    outputNeuronen, inputNeuronen = loadData()
-    oldInputNeuronen = inputNeuronen
-    isNomen = True
-    f = open("nomen.txt", "r")
+        changedInput = _changeClass(inputNeuronen)
+        changedOutput = _changeClass(outputNeuronen)
 
-    neuronNeighbors = []
-    inputNames = []
-    for neighbors in inputNeuronen:
-        for neuronobj in neighbors:
-            inputNames.append(neuronobj.name)
+        open("write.txt", "w").write(str(changedInput))
 
-    outputIsNomen = Output_Neuron("IsNomen")
-    outputNotNomen = Output_Neuron("IsNoNomen")
+        f_input.write(json.dumps(changedInput))
+        f_output.write(json.dumps(changedOutput))
 
-    outputNeuronen = [outputIsNomen, outputNotNomen]
+    def _changeClass(data):
+        """
+        Verändert Objekte der Art [[Class, Class], [Class, Class, Class], ...] in
+        von JSON verarbeitbare 2D-Listen mit Dictionarys anstatt von Klassen
+        Diese Dictionarys müssen von loadData() und save() verarbeitbar sein.
 
-    def getobj(objName):
+        neighborhood := die '2. Dimension' der Liste (Neuronen-Nachbarschaft)
+        Diese Funktion überträgt alle Daten aus data -> output, wobei sie jedoch die
+        Klassen per __dict__-Aufruf in ein Dictionary umwandeln.
+
+        :rtype: list
+        :type data: list
+        """
+
+        output = []
+
+        for neighborhoodCount in range(len(data)):
+            if isinstance(data[neighborhoodCount], Output_Neuron):
+                output.append(data[neighborhoodCount].getDict())
+            else:
+                output.append([])
+                for objCount in range(len(data[neighborhoodCount])):
+                    if isinstance(data[neighborhoodCount][objCount], list):
+                        # Listen abfangen und per map() bearbeiten
+                        output[neighborhoodCount].append(map(
+                            lambda x: data[neighborhoodCount][objCount].getDict(),
+                            xrange(len(data[neighborhoodCount][objCount])))
+                            )
+                    else:
+                        output[neighborhoodCount].append(data[neighborhoodCount][objCount].getDict())
+
+        return output
+
+    def _learn(aktiveNeuron):
+        """
+        Guckt alle Neuronen-Nachbarschaften von hinten nach vorne nach
+         Erstellt 2 Listen: Sendende / Nicht-Sendende
+         verringert gewichtung der Sendenden und steigert die der sendenden um denselben Wert
+         benötigt aktives Output-Neuron
+
+         :type aktiveNeuron: Output_Neuron
+         """
+
+        conns = aktiveNeuron.connections
+        sending = []
+        notsending = []
+
+        for conn in conns:
+            if conn.mode == "on":
+                sending.append(conn)
+                conn.weight -= 0.1
+            else:
+                notsending.append(conn)
+                conn.weight += 0.1
+
+    def _getobj(objName):
         """
         Versucht zu gegebenen Namen das richtige Neuron zu finden
         Dabei nutzt der Algorithmus aus, dass alle Neuronen in einer Nachbarschaft Ähnlichkeiten haben Bsp.:
@@ -270,49 +339,68 @@ def train():
         :type objName: str
         :rtype: Input_Neuron
         """
-        for neuron1, neuron2 in inputNeuronen:
-            if neuron1.name in objName or objName in neuron1.name:
-                if neuron1.name == objName:
-                    return neuron1
-                elif neuron2.name == objName:
-                    return neuron2
-        raise ValueError
+        try:
+            for neuron1, neuron2 in inputNeuronen:
+                if neuron1.name in objName or objName in neuron1.name:
+                    if neuron1.name == objName:
+                        return neuron1
+                    elif neuron2.name == objName:
+                        return neuron2
+        except ValueError:
+            pass
+
+    #1
+    outputNeuronen, inputNeuronen = loadData()
+    typ = 'nom'
+    f = open("nomen.txt", "r")
+
+    neuronNeighbors = []
+    inputNames = []
+
+    for neighbor in inputNeuronen:
+        if neighbor:
+            inputNames += map(lambda x: x.name, neighbor)
+
+    outputIsNomen = Output_Neuron("IsNomen")
+    outputIsAdjektive = Output_Neuron("IsAdjektive")
+    outputIsVerb = Output_Neuron("IsVerb")
+
+    outputNeuronen = [outputIsNomen, outputIsAdjektive, outputIsVerb]
+
+
 
     #2
     for nomen in f.readlines():
         nomen = nomen.strip("\n")
+        nomen = nomen.split(" ")
         #3
-        if len(nomen.split(" ")) > 1:
-            if nomen.split(" ")[1] == "n":
-                isNomen = False
-                print "[+] Found no Nomen"
+        if len(nomen) > 1:
+            typ = {"v": "ver", "a": "adj"}[nomen[1]]
+            print "[+] Found %s" % typ
+            nomen = nomen[0].strip(" " + typ)
         else:
-            isNomen = True
+            typ = "nom"
             print "[+] Found Nomen"
         #4
-        nomen = nomen.strip(" n")
         lenInput = len(nomen)
         neuronNeighborsNames = [nomen[lenInput-x:] for x in range(2, 4)]
+        outputTypes =  {"nom": outputIsNomen, "ver": outputIsVerb, "adj": outputIsAdjektive}
         #5
         for name in neuronNeighborsNames:
-            if isNomen:
-                if name in inputNames:
-                    # _getobj gibt das Input-Neuron mit dem Angegebenen Namen wieder
-                    getobj(name).changeWeight(0.5)
-                else:
-                    neuronNeighbors.append(Input_Neuron(name, outputIsNomen))
-            else:
-                if name in inputNames:
-                    getobj(name).changeWeight(0.5)
-                else:
-                    neuronNeighbors.append(Input_Neuron(name, outputNotNomen))
+            for typstr in ['nom', 'ver', "adj"]:
+                if typ == typstr:
+                    if name in inputNames:
+                        # _getobj gibt das Input-Neuron mit dem Angegebenen Namen wieder
+                        if _getobj(name): _getobj(name).changeWeight(0.5)
+                    else:
+                        neuronNeighbors.append(Input_Neuron(name, outputTypes[typstr]))
 
         inputNeuronen.append(neuronNeighbors)
         neuronNeighbors = []
         # Allen Input Neuronen 'nomen' als Eingabe geben
         #6
 
-        inputNeuronen = map(lambda x: filter(lambda y: y != [], x), inputNeuronen)
+        inputNeuronen = filter(lambda x: x != [], inputNeuronen)
 
         for neighbor in inputNeuronen:
             for neuron in neighbor:
@@ -320,21 +408,23 @@ def train():
 
         # Aktives Output-Neuron finden und "belehren"
         #7
-        if isNomen: learn(outputIsNomen)
-        else: learn(outputNotNomen)
+        if typ == "nom":
+            _learn(outputIsNomen)
+        elif typ == "ver":
+            _learn(outputIsVerb)
+        else:
+            _learn(outputIsAdjektive)
     #8
-    inputNeuronen = filter(lambda ob: ob not in oldInputNeuronen, inputNeuronen)
     if inputNeuronen:
-        save(inputNeuronen, outputNeuronen)
+        _save()
 
 def test():
     outputNeuronen, inputNeuronen = loadData()
     print "Got %d Output-Neuronen and %d Input-Neuronen loaded" % (len(outputNeuronen), len(inputNeuronen) * 2)
 
-    eingabe = ""
     outputs = {}
 
-    while eingabe != "end":
+    while True:
         eingabe = raw_input("Nomen Eingeben:")
 
         if eingabe == "end":
@@ -351,93 +441,7 @@ def test():
         for name in outputs:
             if outputs[name] == biggestValue:
                 print name
-
-def save(inputNeuronen, outputNeuronen):
-    """Diese Funktion soll InputNeuronen speichern, sodass man sie
-    später wieder laden kann und keine Daten verloren gehen
-    Mit JSONEncoder und o.__dict__ dafür muss jedoch noch eine Funktion
-    in den Klassen definiert werden"""
-    f_input = open("saved_input.json", "w")
-    f_output = open("saved_output.json", "w")
-
-    changedInput = changeClass(inputNeuronen)
-    changedOutput = changeClass(outputNeuronen)
-
-    open("write.txt", "w").write(str(changedInput))
-
-    f_input.write(json.dumps(changedInput))
-    f_output.write(json.dumps(changedOutput))
-
-def changeClass(data):
-    """
-    Verändert Objekte der Art [[Class, Class], [Class, Class, Class], ...] in
-    von JSON verarbeitbare 2D-Listen mit Dictionarys anstatt von Klassen
-    Diese Dictionarys müssen von loadData() und save() verarbeitbar sein.
-
-    neighborhood := die '2. Dimension' der Liste (Neuronen-Nachbarschaft)
-    Diese Funktion überträgt alle Daten aus data -> output, wobei sie jedoch die
-    Klassen per __dict__-Aufruf in ein Dictionary umwandeln.
-
-    :rtype: list
-    :type data: list
-    """
-
-    output = []
-
-    for neighborhoodCount in range(len(data)):
-        if isinstance(data[neighborhoodCount], Output_Neuron):
-            output.append(data[neighborhoodCount].getDict())
-        else:
-            output.append([])
-            for objCount in range(len(data[neighborhoodCount])):
-                if isinstance(data[neighborhoodCount][objCount], list):
-                    # Listen abfangen und per map() bearbeiten
-                    output[neighborhoodCount].append(map(
-                        lambda x: data[neighborhoodCount][objCount].getDict(),
-                        xrange(len(data[neighborhoodCount][objCount])))
-                        )
-                else:
-                    output[neighborhoodCount].append(data[neighborhoodCount][objCount].getDict())
-
-    return output
-
-def make_unicode(string):
-    """
-    Erzeugt ISO-8859-1 codierte codes
-
-    :rtype: basestring
-    :type string: str
-    """
-
-    try:
-        if isinstance(string, unicode):
-            return string
-        elif isinstance(string, str):
-            return unicode(string, "ISO-8859-1")
-    except UnicodeDecodeError:
-        return ""
-
-def learn(aktiveNeuron):
-    """
-    Guckt alle Neuronen-Nachbarschaften von hinten nach vorne nach
-     Erstellt 2 Listen: Sendende / Nicht-Sendende
-     verringert gewichtung der Sendenden und steigert die der sendenden um denselben Wert
-     benötigt aktives Output-Neuron
-
-     :type aktiveNeuron: Output_Neuron
-     """
-
-    conns = aktiveNeuron.connections
-    sending = []
-    notsending = []
-
-    for conn in conns:
-        if conn.mode == "on":
-            sending.append(conn)
-            conn.weight -= 0.1
-        else:
-            notsending.append(conn)
-            conn.weight += 0.1
+                break
 
 def loadData():
     """
@@ -479,6 +483,8 @@ def loadData():
         return [], []
 
     # Verbindungen verbinden sich automatisch mit Output_Neuronen
+    if not oldOutputNeuronen:
+        oldOutputNeuronen = [{'name': "IsNomen"}, {'name': "IsNoNomen"}]
 
     for obj in oldOutputNeuronen:
         neuronobj = Output_Neuron(obj['name'])
@@ -490,9 +496,9 @@ def loadData():
     for nachbarschaften in oldInputNeuronen:
         for obj in nachbarschaften:
             # Indexierung bei outputNeuronNames und outputNeuronen dieselbe
-            # Sucht Index von der Klasse mit dem Namen und gibt die Klasse zurück für 2 Neuronen
+            # Sucht Index von der Klasse mit dem Namen und gibt die Klasse zurück für 1(!) Neuronen
             # Wenn Neuron2 doch aktiv sein muss hier ändern : TODO
-            neuronen = [outputNeuronen[outputNeuronenNames.index(obj['neuronNames'][x])] for x in [0]]
+            neuronen = [outputNeuronen[outputNeuronenNames.index(obj['neuronNames'][0])]]
             neuronobj = Input_Neuron(obj['reiz'], neuronen[0])
             neuronobj.count_con = obj['count_con']
             neuronobj.getNewConnection(obj['verb_infos'], outputNeuronen)
@@ -503,7 +509,7 @@ def loadData():
 
     return outputNeuronen, inputNeuronen
 
-def __main__():
+if __name__ == "__main__":
     mode = raw_input("In welchem Modus soll gestartet werden(test/train): ")
 
     if mode == "test":
@@ -512,6 +518,3 @@ def __main__():
         train()
     else:
         print "Wrong Input!"
-
-if __name__ == "__main__":
-    __main__()
